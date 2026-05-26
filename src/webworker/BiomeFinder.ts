@@ -35,7 +35,7 @@ function* spiralGenerator(maxRadius: number, step: number) {
 			yield { x, z }
 		}
 
-		if (x === z || (x < 0 && x === -z) || (x > 0 && x === 1 - z)) {
+		if (x === z || (x < 0 && x === -z) || (x > 0 && x === step - z)) {
 			[dx, dz] = [-dz, dx]  // 90 degree rotation
 		}
 
