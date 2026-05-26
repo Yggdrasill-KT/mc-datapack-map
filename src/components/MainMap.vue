@@ -3,7 +3,7 @@ import "leaflet/dist/leaflet.css";
 import L, { control } from "leaflet";
 import { BiomeLayer } from "../MapLayers/BiomeLayer";
 import { Graticule } from "../MapLayers/Graticule";
-import { onMounted, ref, watch, watchEffect } from 'vue';
+import { onMounted, ref, watch, watchEffect, provide } from 'vue';
 import BiomeTooltip from './BiomeTooltip.vue';
 import { BlockPos, Chunk, ChunkPos, DensityFunction, Identifier, RandomState, Structure, StructurePlacement, StructureSet, WorldgenStructure } from 'deepslate';
 import YSlider from './YSlider.vue';
@@ -270,6 +270,13 @@ function getMarker(structureId: Identifier, pos: BlockPos) {
     return marker
 }
 
+function navigateToBiome(x: number, z: number) {
+    const crs = map.options.crs!
+    const mapPos = new L.Point(x, -z)
+    const latlng = crs.unproject(mapPos)
+    map.flyTo(latlng, 0, { duration: 1.5 })
+}
+
 function updateSpawnMarker(){
     if (settingsStore.dimension.toString() === "minecraft:overworld"){
         const crs = map.options.crs!
@@ -284,6 +291,9 @@ function updateSpawnMarker(){
     }
 
 }
+
+// Provide navigation function for BiomeFinderPanel
+provide('navigateToBiome', navigateToBiome)
 
 loadedDimensionStore.$subscribe((mutation, state) => {
     for (const marker of marker_map.values()){

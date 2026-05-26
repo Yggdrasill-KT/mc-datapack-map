@@ -9,6 +9,7 @@ import DatapackSelection from './DatapackList.vue';
 import Footer from './Footer.vue';
 import MenuButtons from './MenuButtons.vue';
 import SettingsPanel from './SettingsPanel.vue';
+import BiomeFinderPanel from './BiomeFinderPanel.vue';
 import TipMessage from './TipMessage.vue';
 import { EventTracker } from '../util/EventTracker';
 
@@ -78,6 +79,9 @@ import { EventTracker } from '../util/EventTracker';
         <MenuButtons />
         <Suspense>
             <SettingsPanel />
+        </Suspense>
+        <Suspense>
+            <BiomeFinderPanel />
         </Suspense>
         <TipMessage v-if="show_tipmessage" @close="show_tipmessage=false" />
         <DatapackSelection />
