@@ -24,6 +24,10 @@ function startSearch() {
 	biomeFinderStore.startSearch()
 }
 
+function cancelSearch() {
+	biomeFinderStore.cancelSearch()
+}
+
 function handleBiomeClick(x: number, z: number) {
 	if (navigateToBiome) {
 		navigateToBiome(x, z)
@@ -41,18 +45,40 @@ function getBiomeColorStyle(biomeId: string) {
 <template>
 	<div class="biome-finder-panel">
 		<div class="panel-header">
-			<h3>{{ i18n.t('biome_finder.title', 'Biome Explorer') }}</h3>
+			<h3>{{ i18n.t('biome_finder.title', 'Surface Biome Explorer') }}</h3>
 		</div>
 
-		<button
-			class="search-button"
-			@click="startSearch"
-			:disabled="biomeFinderStore.isSearching"
-		>
-			<font-awesome-icon v-if="biomeFinderStore.isSearching" icon="fa-spinner" spin />
-			<font-awesome-icon v-else icon="fa-search" />
-			{{ biomeFinderStore.isSearching ? i18n.t('biome_finder.searching', 'Searching...') : i18n.t('biome_finder.start_search', 'Find All Biomes') }}
-		</button>
+		<div class="radius-row">
+			<input
+				type="number"
+				class="radius-input"
+				v-model.number="biomeFinderStore.searchRadius"
+				:disabled="biomeFinderStore.isSearching"
+				min="100"
+				max="30000"
+				step="100"
+			/>
+			<span class="radius-label">blocks</span>
+		</div>
+
+		<div class="button-row">
+			<button
+				class="search-button"
+				@click="startSearch"
+				:disabled="biomeFinderStore.isSearching"
+			>
+				<font-awesome-icon v-if="biomeFinderStore.isSearching" icon="fa-spinner" spin />
+				<font-awesome-icon v-else icon="fa-magnifying-glass" />
+				{{ biomeFinderStore.isSearching ? i18n.t('biome_finder.searching', 'Searching...') : i18n.t('biome_finder.start_search', 'Find All Surface Biomes') }}
+			</button>
+			<button
+				v-if="biomeFinderStore.isSearching"
+				class="cancel-button"
+				@click="cancelSearch"
+			>
+				<font-awesome-icon icon="fa-xmark" />
+			</button>
+		</div>
 
 		<div v-if="biomeFinderStore.isSearching" class="progress-container">
 			<div class="progress-bar">
@@ -63,11 +89,21 @@ function getBiomeColorStyle(biomeId: string) {
 			</div>
 		</div>
 
-		<div v-if="biomeFinderStore.allBiomesFound && !biomeFinderStore.isSearching" class="completion-message">
-			<font-awesome-icon icon="fa-check-circle" />
-			{{ i18n.t('biome_finder.all_found', 'All biomes found!') }}
+		<div v-if="!biomeFinderStore.isSearching && biomeFinderStore.searchedRadius > 0" class="completion-message" :class="{ 'partial': !biomeFinderStore.allBiomesFound }">
+			<font-awesome-icon :icon="biomeFinderStore.allBiomesFound ? 'fa-circle-check' : 'fa-circle-info'" />
+			<span v-if="biomeFinderStore.allBiomesFound">
+				{{ biomeFinderStore.totalFound }} {{ i18n.t('biome_finder.all_found', 'surface biomes found within') }} {{ biomeFinderStore.searchedRadius.toLocaleString() }} blocks
+			</span>
+			<span v-else>
+				{{ biomeFinderStore.totalFound }} / {{ biomeFinderStore.totalExpected }} {{ i18n.t('biome_finder.partial_found', 'surface biomes found (searched') }} {{ biomeFinderStore.searchedRadius.toLocaleString() }} blocks)
+			</span>
 		</div>
 
+		<div v-if="sortedBiomes.length > 0" class="biome-section">
+			<div class="section-header">
+				{{ i18n.t('biome_finder.found_biomes', 'Surface Biomes Found') }} ({{ sortedBiomes.length }})
+			</div>
+		</div>
 		<div v-if="sortedBiomes.length > 0" class="biome-list">
 			<div
 				v-for="[biomeId, location] in sortedBiomes"
@@ -79,6 +115,24 @@ function getBiomeColorStyle(biomeId: string) {
 				<div class="biome-info">
 					<div class="biome-name">{{ settingsStore.getLocalizedName('biome', Identifier.parse(biomeId), false) }}</div>
 					<div class="biome-distance">{{ Math.round(location.distance) }}m</div>
+				</div>
+			</div>
+		</div>
+
+		<div v-if="!biomeFinderStore.isSearching && biomeFinderStore.missingBiomes.length > 0" class="biome-section">
+			<div class="section-header">
+				{{ i18n.t('biome_finder.missing_biomes', 'Not Found in Search Radius') }} ({{ biomeFinderStore.missingBiomes.length }})
+			</div>
+			<div class="biome-list missing-list">
+				<div
+					v-for="biomeId in biomeFinderStore.missingBiomes"
+					:key="biomeId"
+					class="biome-entry missing-entry"
+				>
+					<div class="biome-color" :style="getBiomeColorStyle(biomeId)"></div>
+					<div class="biome-info">
+						<div class="biome-name">{{ settingsStore.getLocalizedName('biome', Identifier.parse(biomeId), false) }}</div>
+					</div>
 				</div>
 			</div>
 		</div>
@@ -103,7 +157,13 @@ function getBiomeColorStyle(biomeId: string) {
 	font-weight: 600;
 }
 
+.button-row {
+	display: flex;
+	gap: 0.5rem;
+}
+
 .search-button {
+	flex: 1;
 	width: 100%;
 	height: 2.5rem;
 	background-color: rgb(55, 120, 173);
@@ -126,6 +186,25 @@ function getBiomeColorStyle(biomeId: string) {
 .search-button:disabled {
 	cursor: not-allowed;
 	opacity: 0.7;
+}
+
+.cancel-button {
+	height: 2.5rem;
+	padding: 0 0.75rem;
+	background-color: rgba(220, 80, 80, 0.7);
+	color: white;
+	border: none;
+	border-radius: 0.3rem;
+	cursor: pointer;
+	font-size: 1rem;
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	transition: background-color 0.2s;
+}
+
+.cancel-button:hover {
+	background-color: rgba(220, 80, 80, 1);
 }
 
 .progress-container {
@@ -164,6 +243,11 @@ function getBiomeColorStyle(biomeId: string) {
 	align-items: center;
 	justify-content: center;
 	gap: 0.5rem;
+}
+
+.completion-message.partial {
+	background-color: rgba(255, 193, 7, 0.2);
+	color: rgb(255, 220, 100);
 }
 
 .biome-list {
@@ -236,5 +320,59 @@ function getBiomeColorStyle(biomeId: string) {
 
 .biome-list::-webkit-scrollbar-thumb:hover {
 	background: rgba(255, 255, 255, 0.3);
+}
+
+.radius-row {
+	display: flex;
+	align-items: center;
+	gap: 0.5rem;
+}
+
+.radius-input {
+	height: 2.5rem;
+	width: 7rem;
+	padding: 0 0.5rem;
+	background-color: rgba(255, 255, 255, 0.1);
+	color: white;
+	border: 1px solid rgba(255, 255, 255, 0.2);
+	border-radius: 0.3rem;
+	font-size: 1rem;
+	text-align: right;
+}
+
+.radius-input:disabled {
+	opacity: 0.5;
+	cursor: not-allowed;
+}
+
+.radius-label {
+	font-size: 0.9rem;
+	color: rgba(255, 255, 255, 0.7);
+}
+
+.biome-section {
+	display: flex;
+	flex-direction: column;
+	gap: 0.25rem;
+}
+
+.section-header {
+	font-size: 0.85rem;
+	color: rgba(255, 255, 255, 0.5);
+	padding: 0.25rem 0;
+	border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+.missing-list {
+	max-height: 200px;
+}
+
+.missing-entry {
+	cursor: default;
+	opacity: 0.7;
+}
+
+.missing-entry:hover {
+	background-color: rgba(255, 255, 255, 0.05);
 }
 </style>

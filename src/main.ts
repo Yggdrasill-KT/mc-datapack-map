@@ -3,7 +3,7 @@ import { createI18n } from 'vue-i18n'
 import { createPinia } from 'pinia'
 import { FontAwesomeIcon } from "@fortawesome/vue-fontawesome";
 import { library } from "@fortawesome/fontawesome-svg-core";
-import { faFileZipper, faFolderOpen, faXmark, faRotateRight, faPlus, faBars, faMagnifyingGlass, faToggleOn, faToggleOff, faLocationDot, faAngleRight, faAngleLeft, faAngleDown, faDice, faGlobe, faEarthEurope, faMountainSun, faWater, faArrowsDownToLine, faTableCells, faCircleQuestion } from "@fortawesome/free-solid-svg-icons";
+import { faFileZipper, faFolderOpen, faXmark, faRotateRight, faPlus, faBars, faMagnifyingGlass, faToggleOn, faToggleOff, faLocationDot, faAngleRight, faAngleLeft, faAngleDown, faDice, faGlobe, faEarthEurope, faMountainSun, faWater, faArrowsDownToLine, faTableCells, faCircleQuestion, faCircleCheck, faCircleInfo, faSpinner } from "@fortawesome/free-solid-svg-icons";
 import './style.css'
 import App from './App.vue'
 
@@ -14,7 +14,7 @@ import { EventTracker } from './util/EventTracker.js';
 
 registerSW({ immediate: true })
 
-library.add(faFileZipper, faFolderOpen, faXmark, faRotateRight, faPlus, faBars, faMagnifyingGlass, faToggleOn, faToggleOff, faLocationDot, faAngleRight, faAngleLeft, faAngleDown, faDice, faGlobe, faEarthEurope, faMountainSun, faWater, faArrowsDownToLine, faTableCells, faCircleQuestion);
+library.add(faFileZipper, faFolderOpen, faXmark, faRotateRight, faPlus, faBars, faMagnifyingGlass, faToggleOn, faToggleOff, faLocationDot, faAngleRight, faAngleLeft, faAngleDown, faDice, faGlobe, faEarthEurope, faMountainSun, faWater, faArrowsDownToLine, faTableCells, faCircleQuestion, faCircleCheck, faCircleInfo, faSpinner);
 
 EventTracker.init()
 

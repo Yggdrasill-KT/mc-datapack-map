@@ -1,13 +1,29 @@
 import { defineStore } from "pinia";
-import { ref, watch } from "vue";
+import { ref, computed, watch } from "vue";
 import { useLoadedDimensionStore } from "./useLoadedDimensionStore";
 import { useSettingsStore } from "./useSettingsStore";
-import { WorldgenRegistries } from "deepslate";
 
 interface BiomeLocation {
 	x: number,
 	z: number,
 	distance: number
+}
+
+function* spiralGenerator(maxRadius: number, step: number) {
+	yield { x: 0, z: 0 }
+	let x = 0, z = 0
+	let dx = 0, dz = -step
+
+	while (Math.abs(x) <= maxRadius || Math.abs(z) <= maxRadius) {
+		if (Math.abs(x) <= maxRadius && Math.abs(z) <= maxRadius) {
+			yield { x, z }
+		}
+		if (x === z || (x < 0 && x === -z) || (x > 0 && x === step - z)) {
+			[dx, dz] = [-dz, dx]
+		}
+		x += dx
+		z += dz
+	}
 }
 
 export const useBiomeFinderStore = defineStore('biome_finder', () => {
@@ -20,22 +36,28 @@ export const useBiomeFinderStore = defineStore('biome_finder', () => {
 	const totalExpected = ref(0)
 	const biomeLocations = ref(new Map<string, BiomeLocation>())
 	const allBiomesFound = ref(false)
+	const searchedRadius = ref(0)
+	const searchRadius = ref(10000)
+	const allBiomesList = ref<string[]>([])
 
-	let worker: Worker | null = null
+	const missingBiomes = computed(() => {
+		if (isSearching.value || searchedRadius.value === 0) return []
+		return allBiomesList.value.filter(b => !biomeLocations.value.has(b))
+	})
 
-	function startSearch() {
-		if (isSearching.value) {
-			return
-		}
+	let searchCancelled = false
 
-		// Clear previous results
+	async function startSearch() {
+		if (isSearching.value) return
+
 		biomeLocations.value.clear()
 		progress.value = 0
 		totalFound.value = 0
 		allBiomesFound.value = false
+		searchedRadius.value = 0
 		isSearching.value = true
+		searchCancelled = false
 
-		// Get configuration from loaded dimension
 		const level_height = loadedDimensionStore.loaded_dimension.level_height
 		if (!level_height) {
 			console.error("Level height not available")
@@ -43,100 +65,118 @@ export const useBiomeFinderStore = defineStore('biome_finder', () => {
 			return
 		}
 
-		const maxY = level_height.minY + level_height.height - 1
+		// Use the same biomeSource and sampler as the map tile system
+		const biomeSource = loadedDimensionStore.getBiomeSource()
+		if (!biomeSource) {
+			console.error("Biome source not available")
+			isSearching.value = false
+			return
+		}
 
-		// Get all biomes from registry
-		const allBiomes = WorldgenRegistries.BIOME.keys().map(id => id.toString())
+		const sampler = loadedDimensionStore.sampler
+
+		// Extract biome list directly from biome source JSON
+		const biomeSourceJson = loadedDimensionStore.loaded_dimension.biome_source_json as any
+		let allBiomes: string[] = []
+		if (biomeSourceJson?.biomes && Array.isArray(biomeSourceJson.biomes)) {
+			// Use Set to deduplicate: same biome appears multiple times with different climate params
+			allBiomes = [...new Set(
+				(biomeSourceJson.biomes as Array<any>)
+					.map(entry => entry.biome as string)
+					.filter(Boolean)
+			)]
+		} else if (typeof biomeSourceJson?.biome === 'string') {
+			allBiomes = [biomeSourceJson.biome]
+		}
+
+		// Filter to surface biomes only: keep biomes with at least one entry where depth min ≤ 0
+		if (biomeSourceJson?.biomes && Array.isArray(biomeSourceJson.biomes)) {
+			const surfaceBiomeIds = new Set<string>()
+			for (const entry of biomeSourceJson.biomes as Array<any>) {
+				const depth = entry.parameters?.depth
+				const minDepth = Array.isArray(depth) ? depth[0] : (typeof depth === 'number' ? depth : null)
+				if (minDepth !== null && minDepth <= 0) {
+					surfaceBiomeIds.add(entry.biome as string)
+				}
+			}
+			allBiomes = allBiomes.filter(b => surfaceBiomeIds.has(b))
+		}
+
+		if (allBiomes.length === 0) {
+			console.error("No biomes found in biome source JSON")
+			isSearching.value = false
+			return
+		}
+
+		allBiomesList.value = allBiomes
+		const allBiomesSet = new Set(allBiomes)
 		totalExpected.value = allBiomes.length
 
-		// Prepare density functions
-		const densityFunctions: { [key: string]: unknown } = {}
-		for (const id of WorldgenRegistries.DENSITY_FUNCTION.keys()) {
-			const entry = WorldgenRegistries.DENSITY_FUNCTION.get(id)
-			if (entry) {
-				densityFunctions[id.toString()] = entry.toJson()
-			}
-		}
+		const maxY = level_height.minY + level_height.height - 1
+		const maxRadius = searchRadius.value
+		const sampleStep = 16
+		const batchSize = 500
 
-		// Prepare noises
-		const noises: { [key: string]: unknown } = {}
-		for (const id of WorldgenRegistries.NOISE.keys()) {
-			const entry = WorldgenRegistries.NOISE.get(id)
-			if (entry) {
-				noises[id.toString()] = entry.toJson()
-			}
-		}
+		const stepsPerSide = Math.floor(maxRadius / sampleStep) * 2 + 1
+		const totalSamples = stepsPerSide * stepsPerSide
+		let sampleCount = 0
 
-		// Create worker
-		worker = new Worker(new URL('../webworker/BiomeFinder.ts', import.meta.url), { type: 'module' })
+		const spiral = spiralGenerator(maxRadius, sampleStep)
 
-		worker.onmessage = (evt) => {
-			if (evt.data.type === "progress") {
-				progress.value = evt.data.progress
-				totalFound.value = evt.data.totalFound
+		let batchMaxDistance = 0
 
-				// Update biome locations with newly found biomes
-				for (const { biome, x, z, distance } of evt.data.foundBiomes) {
-					if (!biomeLocations.value.has(biome)) {
-						biomeLocations.value.set(biome, { x, z, distance })
+		while (!searchCancelled) {
+			let batchLocalMax = 0
+
+			for (let i = 0; i < batchSize; i++) {
+				const result = spiral.next()
+				if (result.done) {
+					// Spiral exhausted — search complete without finding all biomes
+					searchedRadius.value = Math.round(batchMaxDistance)
+					allBiomesFound.value = false
+					progress.value = 100
+					isSearching.value = false
+					return
+				}
+
+				const { x, z } = result.value
+				const biome = biomeSource.getBiome(x >> 2, maxY >> 2, z >> 2, sampler).toString()
+				const distance = Math.sqrt(x * x + z * z)
+
+				if (distance > batchLocalMax) batchLocalMax = distance
+
+				if (!biomeLocations.value.has(biome) && allBiomesSet.has(biome)) {
+					biomeLocations.value.set(biome, { x, z, distance })
+					totalFound.value = biomeLocations.value.size
+
+					if (biomeLocations.value.size === totalExpected.value) {
+						// All biomes found!
+						batchMaxDistance = Math.max(batchMaxDistance, batchLocalMax)
+						searchedRadius.value = Math.round(batchMaxDistance)
+						allBiomesFound.value = true
+						progress.value = 100
+						isSearching.value = false
+						return
 					}
 				}
-			} else if (evt.data.type === "complete") {
-				progress.value = 100
-				allBiomesFound.value = evt.data.completed
 
-				// Update with final results
-				biomeLocations.value.clear()
-				for (const [biome, location] of Object.entries(evt.data.biomes)) {
-					biomeLocations.value.set(biome, location as BiomeLocation)
-				}
-
-				totalFound.value = biomeLocations.value.size
-				isSearching.value = false
-
-				if (worker) {
-					worker.terminate()
-					worker = null
-				}
-			} else if (evt.data.type === "cancelled") {
-				isSearching.value = false
-				if (worker) {
-					worker.terminate()
-					worker = null
-				}
+				sampleCount++
 			}
+
+			// Update spatial progress and yield to event loop for UI update
+			batchMaxDistance = Math.max(batchMaxDistance, batchLocalMax)
+			progress.value = Math.min(99, Math.round((sampleCount / totalSamples) * 100))
+			await new Promise(r => setTimeout(r, 0))
 		}
 
-		worker.onerror = (error) => {
-			console.error("Biome finder worker error:", error)
-			isSearching.value = false
-			if (worker) {
-				worker.terminate()
-				worker = null
-			}
-		}
+		searchedRadius.value = Math.round(batchMaxDistance)
 
-		// Send configuration to worker
-		worker.postMessage({
-			type: "start",
-			config: {
-				seed: settingsStore.seed,
-				biomeSourceJson: loadedDimensionStore.loaded_dimension.biome_source_json,
-				noiseGeneratorSettingsJson: loadedDimensionStore.loaded_dimension.noise_settings_json,
-				densityFunctions: densityFunctions,
-				noises: noises,
-				maxRadius: 10000,
-				sampleStep: 16,
-				maxY: maxY,
-				allBiomes: allBiomes
-			}
-		})
+		// Cancelled
+		isSearching.value = false
 	}
 
 	function cancelSearch() {
-		if (worker) {
-			worker.postMessage({ type: "cancel" })
-		}
+		searchCancelled = true
 		isSearching.value = false
 	}
 
@@ -146,21 +186,17 @@ export const useBiomeFinderStore = defineStore('biome_finder', () => {
 		totalFound.value = 0
 		totalExpected.value = 0
 		allBiomesFound.value = false
+		searchedRadius.value = 0
+		allBiomesList.value = []
 	}
 
-	// Clear results when dimension changes
 	watch(() => settingsStore.dimension, () => {
-		if (isSearching.value) {
-			cancelSearch()
-		}
+		if (isSearching.value) cancelSearch()
 		clearResults()
 	})
 
-	// Clear results when seed changes
 	watch(() => settingsStore.seed, () => {
-		if (isSearching.value) {
-			cancelSearch()
-		}
+		if (isSearching.value) cancelSearch()
 		clearResults()
 	})
 
@@ -171,6 +207,10 @@ export const useBiomeFinderStore = defineStore('biome_finder', () => {
 		totalExpected,
 		biomeLocations,
 		allBiomesFound,
+		searchedRadius,
+		searchRadius,
+		allBiomesList,
+		missingBiomes,
 		startSearch,
 		cancelSearch,
 		clearResults
