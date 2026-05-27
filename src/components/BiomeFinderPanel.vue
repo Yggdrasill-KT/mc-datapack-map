@@ -31,7 +31,7 @@ function startSearch() {
 		return
 	}
 	if (r < RADIUS_MIN || r > RADIUS_MAX) {
-		radiusError.value = i18n.t('biome_finder.error_range', `Enter a value between ${RADIUS_MIN} and ${RADIUS_MAX}.`, { min: RADIUS_MIN, max: RADIUS_MAX })
+		radiusError.value = i18n.t('biome_finder.error_range', `Enter a value between ${RADIUS_MIN} and ${RADIUS_MAX}.`)
 		return
 	}
 	radiusError.value = ''

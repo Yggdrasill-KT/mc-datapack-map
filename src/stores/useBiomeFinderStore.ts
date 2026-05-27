@@ -1,7 +1,7 @@
 import { defineStore } from "pinia";
 import { ref, computed, watch } from "vue";
-import { useLoadedDimensionStore } from "./useLoadedDimensionStore";
-import { useSettingsStore } from "./useSettingsStore";
+import { useLoadedDimensionStore } from "./useLoadedDimensionStore.js";
+import { useSettingsStore } from "./useSettingsStore.js";
 
 interface BiomeLocation {
 	x: number,
