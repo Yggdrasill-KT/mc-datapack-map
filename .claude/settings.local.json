@@ -1,7 +1,0 @@
-{
-  "permissions": {
-    "allow": [
-      "PowerShell(cmd /c \"npm run dev\" 2>&1 | Select-Object -First 20)"
-    ]
-  }
-}
