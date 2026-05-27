@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, inject } from 'vue';
+import { computed, inject, ref } from 'vue';
 import { Identifier } from 'deepslate';
 import { useBiomeFinderStore } from '../stores/useBiomeFinderStore';
 import { useLoadedDimensionStore } from '../stores/useLoadedDimensionStore';
@@ -11,6 +11,10 @@ const biomeFinderStore = useBiomeFinderStore()
 const loadedDimensionStore = useLoadedDimensionStore()
 const settingsStore = useSettingsStore()
 
+const RADIUS_MIN = 100
+const RADIUS_MAX = 20000
+const radiusError = ref('')
+
 // Inject navigation function from MainMap
 const navigateToBiome = inject<(x: number, z: number) => void>('navigateToBiome')
 
@@ -21,6 +25,16 @@ const sortedBiomes = computed(() => {
 })
 
 function startSearch() {
+	const r = biomeFinderStore.searchRadius
+	if (!Number.isFinite(r) || !Number.isInteger(r)) {
+		radiusError.value = i18n.t('biome_finder.error_invalid', 'Please enter a valid number.')
+		return
+	}
+	if (r < RADIUS_MIN || r > RADIUS_MAX) {
+		radiusError.value = i18n.t('biome_finder.error_range', `Enter a value between ${RADIUS_MIN} and ${RADIUS_MAX}.`, { min: RADIUS_MIN, max: RADIUS_MAX })
+		return
+	}
+	radiusError.value = ''
 	biomeFinderStore.startSearch()
 }
 
@@ -45,21 +59,23 @@ function getBiomeColorStyle(biomeId: string) {
 <template>
 	<div class="biome-finder-panel">
 		<div class="panel-header">
-			<h3>{{ i18n.t('biome_finder.title', 'Surface Biome Explorer') }}</h3>
+			<h3>{{ i18n.t('biome_finder.title', 'Biome Explorer') }}</h3>
 		</div>
 
 		<div class="radius-row">
 			<input
 				type="number"
 				class="radius-input"
+				:class="{ 'input-error': radiusError }"
 				v-model.number="biomeFinderStore.searchRadius"
 				:disabled="biomeFinderStore.isSearching"
 				min="100"
-				max="30000"
+				max="20000"
 				step="100"
 			/>
-			<span class="radius-label">blocks</span>
+			<span class="radius-label">blocks (±coord)</span>
 		</div>
+		<div v-if="radiusError" class="radius-error">{{ radiusError }}</div>
 
 		<div class="button-row">
 			<button
@@ -69,7 +85,7 @@ function getBiomeColorStyle(biomeId: string) {
 			>
 				<font-awesome-icon v-if="biomeFinderStore.isSearching" icon="fa-spinner" spin />
 				<font-awesome-icon v-else icon="fa-magnifying-glass" />
-				{{ biomeFinderStore.isSearching ? i18n.t('biome_finder.searching', 'Searching...') : i18n.t('biome_finder.start_search', 'Find All Surface Biomes') }}
+				{{ biomeFinderStore.isSearching ? i18n.t('biome_finder.searching', 'Searching...') : i18n.t('biome_finder.start_search', 'Find All Biomes') }}
 			</button>
 			<button
 				v-if="biomeFinderStore.isSearching"
@@ -92,16 +108,16 @@ function getBiomeColorStyle(biomeId: string) {
 		<div v-if="!biomeFinderStore.isSearching && biomeFinderStore.searchedRadius > 0" class="completion-message" :class="{ 'partial': !biomeFinderStore.allBiomesFound }">
 			<font-awesome-icon :icon="biomeFinderStore.allBiomesFound ? 'fa-circle-check' : 'fa-circle-info'" />
 			<span v-if="biomeFinderStore.allBiomesFound">
-				{{ biomeFinderStore.totalFound }} {{ i18n.t('biome_finder.all_found', 'surface biomes found within') }} {{ biomeFinderStore.searchedRadius.toLocaleString() }} blocks
+				{{ biomeFinderStore.totalFound }} {{ i18n.t('biome_finder.all_found', 'biomes found within ±') }}{{ biomeFinderStore.searchedRadius.toLocaleString() }} blocks
 			</span>
 			<span v-else>
-				{{ biomeFinderStore.totalFound }} / {{ biomeFinderStore.totalExpected }} {{ i18n.t('biome_finder.partial_found', 'surface biomes found (searched') }} {{ biomeFinderStore.searchedRadius.toLocaleString() }} blocks)
+				{{ biomeFinderStore.totalFound }} / {{ biomeFinderStore.totalExpected }} {{ i18n.t('biome_finder.partial_found', 'biomes found (searched ±') }}{{ biomeFinderStore.searchedRadius.toLocaleString() }} blocks)
 			</span>
 		</div>
 
 		<div v-if="sortedBiomes.length > 0" class="biome-section">
 			<div class="section-header">
-				{{ i18n.t('biome_finder.found_biomes', 'Surface Biomes Found') }} ({{ sortedBiomes.length }})
+				{{ i18n.t('biome_finder.found_biomes', 'Found') }} ({{ sortedBiomes.length }})
 			</div>
 		</div>
 		<div v-if="sortedBiomes.length > 0" class="biome-list">
@@ -121,7 +137,7 @@ function getBiomeColorStyle(biomeId: string) {
 
 		<div v-if="!biomeFinderStore.isSearching && biomeFinderStore.missingBiomes.length > 0" class="biome-section">
 			<div class="section-header">
-				{{ i18n.t('biome_finder.missing_biomes', 'Not Found in Search Radius') }} ({{ biomeFinderStore.missingBiomes.length }})
+				{{ i18n.t('biome_finder.missing_biomes', 'Not found') }} ({{ biomeFinderStore.missingBiomes.length }})
 			</div>
 			<div class="biome-list missing-list">
 				<div
@@ -343,6 +359,15 @@ function getBiomeColorStyle(biomeId: string) {
 .radius-input:disabled {
 	opacity: 0.5;
 	cursor: not-allowed;
+}
+
+.radius-input.input-error {
+	border-color: rgba(220, 80, 80, 0.8);
+}
+
+.radius-error {
+	font-size: 0.8rem;
+	color: rgb(255, 120, 120);
 }
 
 .radius-label {

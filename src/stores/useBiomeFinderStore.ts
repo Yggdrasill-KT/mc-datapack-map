@@ -89,19 +89,6 @@ export const useBiomeFinderStore = defineStore('biome_finder', () => {
 			allBiomes = [biomeSourceJson.biome]
 		}
 
-		// Filter to surface biomes only: keep biomes with at least one entry where depth min ≤ 0
-		if (biomeSourceJson?.biomes && Array.isArray(biomeSourceJson.biomes)) {
-			const surfaceBiomeIds = new Set<string>()
-			for (const entry of biomeSourceJson.biomes as Array<any>) {
-				const depth = entry.parameters?.depth
-				const minDepth = Array.isArray(depth) ? depth[0] : (typeof depth === 'number' ? depth : null)
-				if (minDepth !== null && minDepth <= 0) {
-					surfaceBiomeIds.add(entry.biome as string)
-				}
-			}
-			allBiomes = allBiomes.filter(b => surfaceBiomeIds.has(b))
-		}
-
 		if (allBiomes.length === 0) {
 			console.error("No biomes found in biome source JSON")
 			isSearching.value = false
@@ -112,7 +99,35 @@ export const useBiomeFinderStore = defineStore('biome_finder', () => {
 		const allBiomesSet = new Set(allBiomes)
 		totalExpected.value = allBiomes.length
 
+		const minY = level_height.minY
 		const maxY = level_height.minY + level_height.height - 1
+		const surfaceY = maxY >> 2
+		const caveY = 0
+		const deepY = minY >> 2
+
+		// Per-Y remaining biome sets for early termination per Y level
+		const remainingPerY = new Map<number, Set<string>>([
+			[surfaceY, new Set()],
+			[caveY,    new Set()],
+			[deepY,    new Set()],
+		])
+
+		if (biomeSourceJson?.biomes && Array.isArray(biomeSourceJson.biomes)) {
+			for (const entry of biomeSourceJson.biomes as Array<any>) {
+				const biomeId = entry.biome as string
+				if (!allBiomesSet.has(biomeId)) continue
+				const depth = entry.parameters?.depth
+				const minDepth = Array.isArray(depth) ? depth[0] : (typeof depth === 'number' ? depth : 0)
+				const targetY = minDepth >= 1.0 ? deepY : minDepth > 0 ? caveY : surfaceY
+				remainingPerY.get(targetY)!.add(biomeId)
+			}
+		} else {
+			// Single-biome source (Nether etc.) — assign all to surface Y
+			for (const b of allBiomes) remainingPerY.get(surfaceY)!.add(b)
+		}
+
+		let activeYQuarts = [surfaceY, caveY, deepY].filter(y => remainingPerY.get(y)!.size > 0)
+
 		const maxRadius = searchRadius.value
 		const sampleStep = 16
 		const batchSize = 500
@@ -131,32 +146,37 @@ export const useBiomeFinderStore = defineStore('biome_finder', () => {
 			for (let i = 0; i < batchSize; i++) {
 				const result = spiral.next()
 				if (result.done) {
-					// Spiral exhausted — search complete without finding all biomes
-					searchedRadius.value = Math.round(batchMaxDistance)
-					allBiomesFound.value = false
+					// Spiral exhausted
+					searchedRadius.value = maxRadius
+					allBiomesFound.value = biomeLocations.value.size === totalExpected.value
 					progress.value = 100
 					isSearching.value = false
 					return
 				}
 
 				const { x, z } = result.value
-				const biome = biomeSource.getBiome(x >> 2, maxY >> 2, z >> 2, sampler).toString()
 				const distance = Math.sqrt(x * x + z * z)
-
 				if (distance > batchLocalMax) batchLocalMax = distance
 
-				if (!biomeLocations.value.has(biome) && allBiomesSet.has(biome)) {
-					biomeLocations.value.set(biome, { x, z, distance })
-					totalFound.value = biomeLocations.value.size
+				for (const yQuart of activeYQuarts) {
+					const biome = biomeSource.getBiome(x >> 2, yQuart, z >> 2, sampler).toString()
+					if (!biomeLocations.value.has(biome) && allBiomesSet.has(biome)) {
+						biomeLocations.value.set(biome, { x, z, distance })
+						totalFound.value = biomeLocations.value.size
 
-					if (biomeLocations.value.size === totalExpected.value) {
-						// All biomes found!
-						batchMaxDistance = Math.max(batchMaxDistance, batchLocalMax)
-						searchedRadius.value = Math.round(batchMaxDistance)
-						allBiomesFound.value = true
-						progress.value = 100
-						isSearching.value = false
-						return
+						// Remove from all Y remaining sets and refresh active list
+						for (const remaining of remainingPerY.values()) remaining.delete(biome)
+						activeYQuarts = activeYQuarts.filter(y => remainingPerY.get(y)!.size > 0)
+
+						if (biomeLocations.value.size === totalExpected.value || activeYQuarts.length === 0) {
+							batchMaxDistance = Math.max(batchMaxDistance, batchLocalMax)
+							const allFound = biomeLocations.value.size === totalExpected.value
+							searchedRadius.value = maxRadius
+							allBiomesFound.value = allFound
+							progress.value = 100
+							isSearching.value = false
+							return
+						}
 					}
 				}
 
@@ -166,6 +186,15 @@ export const useBiomeFinderStore = defineStore('biome_finder', () => {
 			// Update spatial progress and yield to event loop for UI update
 			batchMaxDistance = Math.max(batchMaxDistance, batchLocalMax)
 			progress.value = Math.min(99, Math.round((sampleCount / totalSamples) * 100))
+
+			if (activeYQuarts.length === 0) {
+				searchedRadius.value = maxRadius
+				allBiomesFound.value = biomeLocations.value.size === totalExpected.value
+				progress.value = 100
+				isSearching.value = false
+				return
+			}
+
 			await new Promise(r => setTimeout(r, 0))
 		}
 
