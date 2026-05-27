@@ -12,8 +12,10 @@ const loadedDimensionStore = useLoadedDimensionStore()
 const settingsStore = useSettingsStore()
 
 const RADIUS_MIN = 100
-const RADIUS_MAX = 20000
+const RADIUS_MAX = 16000
 const radiusError = ref('')
+const centerError = ref('')
+const pasteError = ref('')
 
 // Inject navigation function from MainMap
 const navigateToBiome = inject<(x: number, z: number) => void>('navigateToBiome')
@@ -34,8 +36,33 @@ function startSearch() {
 		radiusError.value = i18n.t('biome_finder.error_range', `Enter a value between ${RADIUS_MIN} and ${RADIUS_MAX}.`)
 		return
 	}
+	const cx = biomeFinderStore.centerX
+	const cz = biomeFinderStore.centerZ
+	if (!Number.isFinite(cx) || !Number.isInteger(cx) || !Number.isFinite(cz) || !Number.isInteger(cz)) {
+		centerError.value = i18n.t('biome_finder.error_center_invalid', 'Please enter valid integers for X and Z.')
+		return
+	}
 	radiusError.value = ''
+	centerError.value = ''
 	biomeFinderStore.startSearch()
+}
+
+async function pasteFromCommand() {
+	try {
+		const text = await navigator.clipboard.readText()
+		const match = text.match(/run tp\s+([-\d.]+)\s+([-\d.]+)\s+([-\d.]+)/)
+			?? text.match(/\btp\s+(?:@\S+\s+)?([-\d.]+)\s+([-\d.]+)\s+([-\d.]+)/)
+		if (!match) {
+			pasteError.value = i18n.t('biome_finder.error_paste', 'Could not read coordinates from command.')
+			return
+		}
+		biomeFinderStore.centerX = Math.round(parseFloat(match[1]))
+		biomeFinderStore.centerZ = Math.round(parseFloat(match[3]))
+		pasteError.value = ''
+		centerError.value = ''
+	} catch {
+		pasteError.value = i18n.t('biome_finder.error_paste', 'Could not read coordinates from command.')
+	}
 }
 
 function cancelSearch() {
@@ -62,6 +89,32 @@ function getBiomeColorStyle(biomeId: string) {
 			<h3>{{ i18n.t('biome_finder.title', 'Biome Explorer') }}</h3>
 		</div>
 
+		<div class="center-row">
+			<span class="center-label">X</span>
+			<input
+				type="number"
+				class="center-input"
+				:class="{ 'input-error': centerError }"
+				v-model.number="biomeFinderStore.centerX"
+				:disabled="biomeFinderStore.isSearching"
+				step="1"
+			/>
+			<span class="center-label">Z</span>
+			<input
+				type="number"
+				class="center-input"
+				:class="{ 'input-error': centerError }"
+				v-model.number="biomeFinderStore.centerZ"
+				:disabled="biomeFinderStore.isSearching"
+				step="1"
+			/>
+			<button class="paste-button" @click="pasteFromCommand" :disabled="biomeFinderStore.isSearching" :title="i18n.t('biome_finder.paste_tooltip', 'Paste from /tp command')">
+				<font-awesome-icon icon="fa-paste" />
+			</button>
+		</div>
+		<div v-if="centerError" class="radius-error">{{ centerError }}</div>
+		<div v-if="pasteError" class="radius-error">{{ pasteError }}</div>
+
 		<div class="radius-row">
 			<input
 				type="number"
@@ -70,7 +123,7 @@ function getBiomeColorStyle(biomeId: string) {
 				v-model.number="biomeFinderStore.searchRadius"
 				:disabled="biomeFinderStore.isSearching"
 				min="100"
-				max="20000"
+				max="16000"
 				step="100"
 			/>
 			<span class="radius-label">blocks (±coord)</span>
@@ -108,7 +161,7 @@ function getBiomeColorStyle(biomeId: string) {
 		<div v-if="!biomeFinderStore.isSearching && biomeFinderStore.searchedRadius > 0" class="completion-message" :class="{ 'partial': !biomeFinderStore.allBiomesFound }">
 			<font-awesome-icon :icon="biomeFinderStore.allBiomesFound ? 'fa-circle-check' : 'fa-circle-info'" />
 			<span v-if="biomeFinderStore.allBiomesFound">
-				{{ biomeFinderStore.totalFound }} {{ i18n.t('biome_finder.all_found', 'biomes found within ±') }}{{ biomeFinderStore.searchedRadius.toLocaleString() }} blocks
+				{{ biomeFinderStore.totalFound }} {{ i18n.t('biome_finder.all_found', 'biomes found within') }} {{ biomeFinderStore.searchedRadius.toLocaleString() }} blocks
 			</span>
 			<span v-else>
 				{{ biomeFinderStore.totalFound }} / {{ biomeFinderStore.totalExpected }} {{ i18n.t('biome_finder.partial_found', 'biomes found (searched ±') }}{{ biomeFinderStore.searchedRadius.toLocaleString() }} blocks)
@@ -336,6 +389,65 @@ function getBiomeColorStyle(biomeId: string) {
 
 .biome-list::-webkit-scrollbar-thumb:hover {
 	background: rgba(255, 255, 255, 0.3);
+}
+
+.center-row {
+	display: flex;
+	align-items: center;
+	gap: 0.4rem;
+}
+
+.center-label {
+	font-size: 0.85rem;
+	color: rgba(255, 255, 255, 0.6);
+	flex-shrink: 0;
+}
+
+.center-input {
+	height: 2.5rem;
+	width: 5.5rem;
+	padding: 0 0.5rem;
+	background-color: rgba(255, 255, 255, 0.1);
+	color: white;
+	border: 1px solid rgba(255, 255, 255, 0.2);
+	border-radius: 0.3rem;
+	font-size: 0.95rem;
+	text-align: right;
+}
+
+.center-input:disabled {
+	opacity: 0.5;
+	cursor: not-allowed;
+}
+
+.center-input.input-error {
+	border-color: rgba(220, 80, 80, 0.8);
+}
+
+.paste-button {
+	height: 2.5rem;
+	padding: 0 0.6rem;
+	background-color: rgba(255, 255, 255, 0.1);
+	color: rgba(255, 255, 255, 0.8);
+	border: 1px solid rgba(255, 255, 255, 0.2);
+	border-radius: 0.3rem;
+	cursor: pointer;
+	font-size: 1rem;
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	transition: background-color 0.2s;
+	flex-shrink: 0;
+	margin-left: auto;
+}
+
+.paste-button:hover:not(:disabled) {
+	background-color: rgba(255, 255, 255, 0.2);
+}
+
+.paste-button:disabled {
+	opacity: 0.5;
+	cursor: not-allowed;
 }
 
 .radius-row {
